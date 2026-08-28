@@ -1,0 +1,215 @@
+<?xml version="1.0"?>
+<robot name="tracked_canopy_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    tracked_canopy_robot.urdf.xacro
+    
+    这是第一版 Gazebo 用机器人模型。
+    建模策略：
+      - 外观看起来像履带底盘；
+      - 运动学上先用差速小车插件 gazebo_ros_diff_drive；
+      - 这样你可以先验证 /cmd_vel、/Odometry、/scan_2d 和控制节点闭环；
+      - 后续再升级成更复杂的履带接触物理模型。
+    坐标约定：
+      - base_link 的 x 轴：车体前进方向；
+      - base_link 的 y 轴：车体左侧；
+      - livox_frame 的 x 轴：雷达正前方；
+      - 雷达安装在车体右侧，朝右看树冠，所以相对 base_link 绕 z 轴旋转 -90 度。
+  -->
+  <!-- 常用尺寸参数，后续要改车体尺寸主要改这里。 -->
+  <xacro:property name="base_length" value="0.80"/>
+  <xacro:property name="base_width" value="0.55"/>
+  <xacro:property name="base_height" value="0.22"/>
+  <xacro:property name="track_length" value="0.86"/>
+  <xacro:property name="track_width" value="0.12"/>
+  <xacro:property name="track_height" value="0.16"/>
+  <xacro:property name="wheel_radius" value="0.08"/>
+  <xacro:property name="wheel_width" value="0.05"/>
+  <!-- base_footprint 是地面投影坐标系，常用于导航。 -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${base_height / 2.0}" rpy="0 0 0"/>
+  </joint>
+  <!-- 主车体。 -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0"/>
+      <mass value="35.0"/>
+      <inertia ixx="1.0" ixy="0" ixz="0" iyy="1.4" iyz="0" izz="1.8"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+      <material name="body_blue">
+        <color rgba="0.05 0.25 0.90 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- 左右履带只是视觉和碰撞外壳，真实驱动由四个轮子和差速插件负责。 -->
+  <link name="left_track_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="${track_length} ${track_width} ${track_height}"/>
+      </geometry>
+      <material name="track_dark">
+        <color rgba="0.03 0.03 0.03 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="${track_length} ${track_width} ${track_height}"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_track_fixed" type="fixed">
+    <parent link="base_link"/>
+    <child link="left_track_link"/>
+    <origin xyz="0 ${base_width / 2.0 + track_width / 2.0} ${-base_height / 2.0 + track_height / 2.0}" rpy="0 0 0"/>
+  </joint>
+  <link name="right_track_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="${track_length} ${track_width} ${track_height}"/>
+      </geometry>
+      <material name="track_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="${track_length} ${track_width} ${track_height}"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_track_fixed" type="fixed">
+    <parent link="base_link"/>
+    <child link="right_track_link"/>
+    <origin xyz="0 ${-(base_width / 2.0 + track_width / 2.0)} ${-base_height / 2.0 + track_height / 2.0}" rpy="0 0 0"/>
+  </joint>
+  <!--
+    四个驱动轮。
+    Gazebo 的 diff_drive 插件需要左轮 joint 和右轮 joint。
+    这里用前方两个轮子做插件驱动轮，后方两个轮子作为自由支撑轮。
+  -->
+  <xacro:macro name="drive_wheel" params="prefix x y driven">
+    <link name="${prefix}_wheel_link">
+      <inertial>
+        <origin xyz="0 0 0"/>
+        <mass value="1.0"/>
+        <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="wheel_gray">
+          <color rgba="0.20 0.20 0.20 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${prefix}_wheel_link"/>
+      <origin xyz="${x} ${y} ${-base_height / 2.0}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+  <xacro:drive_wheel prefix="front_left"  x="0.28"  y="${base_width / 2.0 + track_width / 2.0}" driven="true"/>
+  <xacro:drive_wheel prefix="front_right" x="0.28"  y="${-(base_width / 2.0 + track_width / 2.0)}" driven="true"/>
+  <xacro:drive_wheel prefix="rear_left"   x="-0.28" y="${base_width / 2.0 + track_width / 2.0}" driven="false"/>
+  <xacro:drive_wheel prefix="rear_right"  x="-0.28" y="${-(base_width / 2.0 + track_width / 2.0)}" driven="false"/>
+  <!-- 雷达安装架。雷达在右侧，朝向右侧树冠。 -->
+  <link name="livox_frame">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="0.10 0.08 0.08"/>
+      </geometry>
+      <material name="lidar_green">
+        <color rgba="0.0 0.9 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="0.10 0.08 0.08"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="livox_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="livox_frame"/>
+    <origin xyz="0.05 -0.36 0.10" rpy="0 0 -1.57079632679"/>
+  </joint>
+  <!-- Gazebo 差速驱动插件。它订阅 /cmd_vel，发布 /Odometry。 -->
+  <gazebo>
+    <plugin name="tracked_diff_drive" filename="libgazebo_ros_diff_drive.so">
+      <rosDebugLevel>na</rosDebugLevel>
+      <publishWheelTF>false</publishWheelTF>
+      <publishWheelJointState>true</publishWheelJointState>
+      <alwaysOn>true</alwaysOn>
+      <updateRate>50.0</updateRate>
+      <leftJoint>front_left_wheel_joint</leftJoint>
+      <rightJoint>front_right_wheel_joint</rightJoint>
+      <wheelSeparation>${base_width + track_width}</wheelSeparation>
+      <wheelDiameter>${2.0 * wheel_radius}</wheelDiameter>
+      <torque>20</torque>
+      <commandTopic>/cmd_vel</commandTopic>
+      <odometryTopic>/Odometry</odometryTopic>
+      <odometryFrame>odom</odometryFrame>
+      <robotBaseFrame>base_link</robotBaseFrame>
+      <publishOdomTF>true</publishOdomTF>
+    </plugin>
+  </gazebo>
+  <!-- Gazebo 2D 激光雷达插件。输出话题是 /scan_2d，frame_id 是 livox_frame。 -->
+  <gazebo reference="livox_frame">
+    <sensor name="side_lidar" type="ray">
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>15</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1</resolution>
+            <min_angle>-2.09439510239</min_angle>
+            <max_angle>2.09439510239</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.20</min>
+          <max>4.00</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <plugin name="gazebo_ros_laser" filename="libgazebo_ros_laser.so">
+        <topicName>/scan_2d</topicName>
+        <frameName>livox_frame</frameName>
+      </plugin>
+    </sensor>
+  </gazebo>
+</robot>
+

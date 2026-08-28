@@ -1,0 +1,102 @@
+<launch>
+  <!--
+    canopy_sim.launch
+    
+    这个 launch 同时启动三个节点：
+      1. simple_chassis_sim_node
+         轻量底盘仿真：订阅 /cmd_vel，发布 /Odometry。
+      2. tree_laserscan_sim_node
+         树冠二维激光仿真：订阅 /Odometry，发布 /scan_2d。
+      3. odom_listener_5_dipan
+         你的树冠检测与底盘控制节点：订阅 /Odometry 和 /scan_2d，发布 /cmd_vel。
+    三个节点组成闭环：
+      odom_listener_5_dipan -> /cmd_vel -> simple_chassis_sim_node
+      simple_chassis_sim_node -> /Odometry -> tree_laserscan_sim_node
+      tree_laserscan_sim_node -> /scan_2d -> odom_listener_5_dipan
+  -->
+  <!-- 是否顺时针绕树。true 表示树默认在机器人右侧，控制节点看右前方 ROI。 -->
+  <arg name="clockwise" default="true" />
+  <!-- 每次绕树移动的距离，单位 m。走完这段距离后，机器人会转向正对树冠。 -->
+  <arg name="step_distance" default="0.30" />
+  <!-- 机器人期望距离树冠边界的距离，单位 m。 -->
+  <arg name="target_distance" default="0.80" />
+  <!-- 绕树移动时的前进速度，单位 m/s。初次测试建议保持很小。 -->
+  <arg name="linear_speed" default="0.05" />
+  <!-- 控制节点允许发布的最大角速度，单位 rad/s。 -->
+  <arg name="max_angular_speed" default="0.25" />
+  <!-- 每个作业点停顿时间，单位 s。默认 1 秒，方便观察状态机。 -->
+  <arg name="work_pause_duration" default="1.0" />
+  <!-- 控制节点提取树冠点的侧向视野角。绕树时树在侧方，建议至少 100 度。 -->
+  <arg name="roi_angle_limit_deg" default="120.0" />
+  <!-- 仿真树冠半径，同时给控制节点用于估计树心和累计绕树角度。 -->
+  <arg name="canopy_radius" default="0.65" />
+  <arg name="laser_yaw_offset_deg" default="-90.0" />
+  <!--
+    底盘仿真节点。
+    init_x/init_y/init_yaw_deg 决定机器人初始位置。
+    当前默认值配合 clockwise=true：树冠在机器人右前方，控制节点一启动就能看到树冠。
+  -->
+  <node pkg="mid360_processor"
+        type="simple_chassis_sim_node"
+        name="simple_chassis_sim_node"
+        output="screen">
+    <param name="init_x" value="1.6" />
+    <param name="init_y" value="0.0" />
+    <param name="init_yaw_deg" value="-90.0" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+    <param name="cmd_vel_topic" value="/cmd_vel" />
+    <param name="odom_topic" value="/Odometry" />
+    <param name="max_linear_speed" value="0.30" />
+    <param name="max_angular_speed" value="0.60" />
+  </node>
+  <!--
+    树冠二维激光仿真节点。
+    tree_x/tree_y 是树冠圆心。
+    canopy_radius 是树冠二维投影半径。
+    noise_stddev 是测距噪声标准差，单位 m。
+  -->
+  <node pkg="mid360_processor"
+        type="tree_laserscan_sim_node"
+        name="tree_laserscan_sim_node"
+        output="screen">
+    <param name="tree_x" value="0.0" />
+    <param name="tree_y" value="0.0" />
+    <param name="canopy_radius" value="$(arg canopy_radius)" />
+    <param name="odom_topic" value="/Odometry" />
+    <param name="scan_topic" value="/scan_2d" />
+    <param name="laser_frame" value="livox_frame" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+    <param name="range_max" value="3.5" />
+    <param name="noise_stddev" value="0.01" />
+  </node>
+  <!--
+    你的控制节点。
+    注意：type 必须是 CMakeLists.txt 里 add_executable 的目标名。
+    你现在把控制源码命名成 odom_listener_5_dipan.cpp，所以这里 type 写 odom_listener_5_dipan。
+  -->
+  <node pkg="mid360_processor"
+        type="odom_listener_5_dipan"
+        name="canopy_tracker_node"
+        output="screen">
+    <param name="clockwise" value="$(arg clockwise)" />
+    <param name="step_distance" value="$(arg step_distance)" />
+    <param name="target_distance" value="$(arg target_distance)" />
+    <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="max_angular_speed" value="$(arg max_angular_speed)" />
+    <param name="work_pause_duration" value="$(arg work_pause_duration)" />
+    <param name="roi_angle_limit_deg" value="$(arg roi_angle_limit_deg)" />
+    <param name="canopy_radius_for_orbit" value="$(arg canopy_radius)" />
+    <param name="cmd_vel_topic" value="/cmd_vel" />
+    <param name="odom_topic" value="/Odometry" />
+    <param name="scan_topic" value="/scan_2d" />
+    <param name="laser_frame" value="livox_frame" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+  </node>
+
+  <node pkg="rviz"
+      type="rviz"
+      name="rviz"
+      args="-d $(find mid360_processor)/rviz/canopy_sim.rviz"
+      output="screen" />
+      
+</launch>

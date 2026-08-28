@@ -1,0 +1,83 @@
+<launch>
+  <!--
+    gazebo_canopy_sim.launch
+    
+    第一版 Gazebo 三维仿真入口。
+    启动内容：
+      1. Gazebo 世界 single_canopy.world；
+      2. 机器人模型 tracked_canopy_robot.urdf.xacro；
+      3. robot_state_publisher；
+      4. spawn_model，把机器人放入 Gazebo；
+      5. odom_listener_5_dipan，你的树冠控制节点。
+    注意：
+      这个 launch 假设文件已经放在 mid360_processor 包中：
+        urdf/tracked_canopy_robot.urdf.xacro
+        worlds/single_canopy.world
+        launch/gazebo_canopy_sim.launch
+  -->
+  <arg name="paused" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="world" default="$(find mid360_processor)/worlds/single_canopy.world"/>
+  <!-- 初始位置：树冠在 (0,0)，机器人从右侧出发，车头朝 -Y，右侧雷达朝向树冠。 -->
+  <arg name="robot_x" default="1.70"/>
+  <arg name="robot_y" default="0.00"/>
+  <arg name="robot_z" default="0.12"/>
+  <arg name="robot_yaw" default="-1.57079632679"/>
+  <!-- 控制参数，先保守一点，避免 Gazebo 中运动过快。 -->
+  <arg name="step_distance" default="0.30"/>
+  <arg name="target_distance" default="0.80"/>
+  <arg name="linear_speed" default="0.04"/>
+  <arg name="max_angular_speed" default="0.22"/>
+  <arg name="work_pause_duration" default="1.0"/>
+  <arg name="roi_angle_limit_deg" default="120.0"/>
+  <arg name="canopy_radius_for_orbit" default="0.65"/>
+  <arg name="laser_yaw_offset_deg" default="-90.0"/>
+  <param name="/use_sim_time" value="$(arg use_sim_time)"/>
+  <!-- 启动 Gazebo。 -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
+  <!-- xacro 会把 urdf.xacro 展开成 robot_description 参数。 -->
+  <param name="robot_description"
+         command="$(find xacro)/xacro '$(find mid360_processor)/urdf/tracked_canopy_robot.urdf.xacro'"/>
+  <!-- 发布机器人各 link 之间的 TF。 -->
+  <node pkg="robot_state_publisher"
+        type="robot_state_publisher"
+        name="robot_state_publisher"
+        output="screen"/>
+  <!-- 把 robot_description 中的机器人生成到 Gazebo 世界中。 -->
+  <node pkg="gazebo_ros"
+        type="spawn_model"
+        name="spawn_tracked_canopy_robot"
+        output="screen"
+        args="-urdf -param robot_description -model tracked_canopy_robot -x $(arg robot_x) -y $(arg robot_y) -z $(arg robot_z) -Y $(arg robot_yaw)"/>
+  <!-- 你的控制节点。 -->
+  <node pkg="mid360_processor"
+        type="odom_listener_5_dipan"
+        name="canopy_tracker_node"
+        output="screen">
+    <param name="clockwise" value="true"/>
+    <param name="step_distance" value="$(arg step_distance)"/>
+    <param name="target_distance" value="$(arg target_distance)"/>
+    <param name="linear_speed" value="$(arg linear_speed)"/>
+    <param name="max_angular_speed" value="$(arg max_angular_speed)"/>
+    <param name="work_pause_duration" value="$(arg work_pause_duration)"/>
+    <param name="roi_angle_limit_deg" value="$(arg roi_angle_limit_deg)"/>
+    <param name="canopy_radius_for_orbit" value="$(arg canopy_radius_for_orbit)"/>
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)"/>
+    <param name="cmd_vel_topic" value="/cmd_vel"/>
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="scan_topic" value="/scan_2d"/>
+    <param name="laser_frame" value="livox_frame"/>
+  </node>
+
+  <node pkg="rviz"
+      type="rviz"
+      name="rviz"
+      args="-d $(find mid360_processor)/rviz/gazebo_canopy_sim.rviz"
+      output="screen" />
+</launch>

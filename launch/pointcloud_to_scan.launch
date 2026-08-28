@@ -1,0 +1,30 @@
+<launch>
+    <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="pointcloud_to_laserscan_node" output="screen">
+        
+        <remap from="cloud_in" to="/livox/lidar"/>
+        
+        <remap from="scan" to="/scan_2d"/>
+
+        <rosparam>
+            target_frame: livox_frame # 必须与你雷达驱动里发布的 frame_id 一致
+            transform_tolerance: 0.01
+            
+            # Z 轴截取范围：雷达中心下方 10cm 到上方 15cm
+            min_height: -0.1
+            max_height: 0.1
+            
+            # 扫描角度范围与分辨率
+            <!-- angle_min: -1.047197
+            angle_max:  1.047197 -->
+            angle_min: -1.5707
+            angle_max:  1.5707
+            angle_increment: 0.0043 # 约 0.25 度一个点
+            scan_time: 0.1
+            
+            # 距离范围过滤
+            range_min: 0.1  # 过滤雷达自身或车体噪点
+            range_max: 3.0
+            use_inf: true
+        </rosparam>
+    </node>
+</launch>

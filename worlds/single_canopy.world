@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="single_canopy_world">
+    <!--
+      single_canopy.world
+      
+      最小 Gazebo 世界：
+        - 一块平地；
+        - 一个太阳光源；
+        - 一棵用圆柱近似的树冠二维投影。
+      这里先不追求树的真实外观。
+      目标是让 Gazebo 激光雷达能扫到一个稳定的障碍物边界，
+      从而验证你的控制节点能否驱动小车绕树冠走。
+    -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <!-- 树冠：用一个低矮圆柱表示二维投影，半径约 0.65m。 -->
+    <model name="canopy_cylinder">
+      <static>true</static>
+      <pose>0 0 0.35 0 0 0</pose>
+      <link name="canopy_link">
+        <visual name="canopy_visual">
+          <geometry>
+            <cylinder>
+              <radius>0.65</radius>
+              <length>0.70</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.0 0.45 0.05 0.55</ambient>
+            <diffuse>0.0 0.65 0.08 0.55</diffuse>
+          </material>
+        </visual>
+        <collision name="canopy_collision">
+          <geometry>
+            <cylinder>
+              <radius>0.65</radius>
+              <length>0.70</length>
+            </cylinder>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+  </world>
+</sdf>
