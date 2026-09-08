@@ -1,0 +1,197 @@
+<launch>
+  <!--
+    高级二维树冠仿真。
+    和 canopy_sim.launch 相比，这个 launch 把树冠仿真节点换成
+    tree_laserscan_sim_node_v2，用来测试更接近真实果园的 LaserScan：
+      - 椭圆树冠
+      - 不规则边界
+      - 树冠缺口
+      - 离群噪声点
+      - 可选相邻树干扰
+  -->
+  <arg name="clockwise" default="true" />
+  <arg name="step_distance" default="0.50" />
+  <!-- 绕行移动过程中持续控制小车右侧与树冠表面的净距离约为 0.30 m。 -->
+  <arg name="target_distance" default="0.5" />
+  <!-- 分段里程达到后，右侧距离还需进入 0.30±0.05 m 才能转入正对状态。 -->
+  <arg name="distance_tolerance" default="0.05" />
+  <arg name="linear_speed" default="0.10" />
+  <arg name="max_angular_speed" default="0.12" />
+  <arg name="work_pause_duration" default="1.0" />
+  <!-- 完成一圈必须回到第一帧里程计位置附近。 -->
+  <arg name="return_distance_threshold" default="0.50" />
+  <!-- 航向 ROI 短时丢点时允许使用树心几何切线的最长时间。 -->
+  <arg name="heading_fallback_timeout" default="0.50" />
+  <!-- 限制局部 PCA 航向每帧变化，抑制树叶噪声和 180 度翻转。 -->
+  <arg name="max_heading_change_deg" default="5.0" />
+  <!-- Fast-LIO 单帧极角跳变超过该值时不计入绕行进度。 -->
+  <arg name="max_orbit_delta_deg" default="15.0" />
+  <arg name="launch_rviz" default="true" />
+  <!-- 绕树移动控制增益：雷达局部切线为主，方位和距离项负责稳定闭环。 -->
+  <arg name="k_turn_move" default="0.20" />
+  <arg name="k_orbit_heading" default="0.80" />
+  <arg name="k_bearing_move" default="0.65" />
+  <arg name="k_distance_move" default="0.80" />
+  <arg name="k_turn_align" default="0.80" />
+  <arg name="k_orbit_feedforward" default="1.0" />
+  <!--
+    两组雷达检测区域，角度均相对 livox_frame 的 x 轴：
+      航向区域显示为蓝色，用于绕树移动方向拟合；
+      正对区域显示为橙色，用于判断雷达是否重新正对树冠。
+  -->
+  <arg name="heading_roi_min_deg" default="-30.0" />
+  <arg name="heading_roi_max_deg" default="120.0" />
+  <arg name="facing_roi_min_deg" default="-30.0" />
+  <arg name="facing_roi_max_deg" default="30.0" />
+  <arg name="laser_yaw_offset_deg" default="-90.0" />
+  <!--
+    实物比例基准：
+      底盘俯视尺寸为 1.60 m × 1.00 m；
+      雷达位于底盘右侧边缘，即 base_link 的 y=-0.50 m；
+      中型成龄荔枝树冠采用 6.0 m × 5.0 m 椭圆近似。
+    树冠没有统一尺寸，实测后只需覆盖下面两个半径参数。
+  -->
+  <arg name="robot_length" default="1.60" />
+  <arg name="robot_width" default="1.00" />
+  <arg name="laser_x_offset" default="0.00" />
+  <arg name="laser_y_offset" default="-0.50" />
+  <!-- target_radius_x/y 是半径，因此 3.0/2.5 对应直径 6.0/5.0 m。 -->
+  <arg name="target_radius_x" default="3.00" />
+  <arg name="target_radius_y" default="2.50" />
+  <arg name="target_yaw_deg" default="15.0" />
+  <arg name="target_waviness_amplitude" default="0.06" />
+  <arg name="target_waviness_frequency" default="6" />
+  <arg name="target_radial_noise_stddev" default="0.02" />
+  <!-- 缺口参数。gap_center 是树冠局部椭圆角度，不是世界坐标角。 -->
+  <arg name="target_enable_gap" default="false" />
+  <arg name="target_gap_center_deg" default="120.0" />
+  <arg name="target_gap_width_deg" default="45.0" />
+  <!-- 相邻树干扰。先默认关闭；需要压力测试时改成 true。 -->
+  <arg name="neighbor_enabled" default="false" />
+  <!-- 离群点数量。初次测试建议从 0 或 5 开始，逐步增加。 -->
+  <arg name="outlier_count" default="0" />
+  <node pkg="mid360_processor"
+        type="simple_chassis_sim_node"
+        name="simple_chassis_sim_node"
+        output="screen">
+    <!--
+      机器人中心初始 x=3.65 m。雷达位于右侧边缘，初始时其世界坐标
+      约为 x=3.15 m，与不规则树冠东侧表面的实际净距离约为 0.35 m。
+    -->
+    <param name="init_x" value="3.65" />
+    <param name="init_y" value="0.0" />
+    <param name="init_yaw_deg" value="-90.0" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+    <param name="laser_x_offset" value="$(arg laser_x_offset)" />
+    <param name="laser_y_offset" value="$(arg laser_y_offset)" />
+    <param name="robot_length" value="$(arg robot_length)" />
+    <param name="robot_width" value="$(arg robot_width)" />
+    <param name="robot_marker_height" value="0.20" />
+    <param name="cmd_vel_topic" value="/cmd_vel" />
+    <param name="odom_topic" value="/Odometry" />
+    <param name="max_linear_speed" value="0.30" />
+    <param name="max_angular_speed" value="0.60" />
+  </node>
+  <node pkg="mid360_processor"
+        type="tree_laserscan_sim_node_v2"
+        name="tree_laserscan_sim_node_v2"
+        output="screen">
+    <param name="odom_topic" value="/Odometry" />
+    <param name="scan_topic" value="/scan_2d" />
+    <param name="laser_frame" value="livox_frame" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+    <param name="laser_x_offset" value="$(arg laser_x_offset)" />
+    <param name="laser_y_offset" value="$(arg laser_y_offset)" />
+    <!--
+      Mid-360 的二维等效参数：水平 360°、可靠近距从 0.2 m 起、
+      10% 反射率目标量程 40 m、典型帧率 10 Hz。
+      0.2° 是本二维模型的离散角步长，不等同于真实非重复扫描模式。
+    -->
+    <param name="rate" value="10.0" />
+    <param name="range_min" value="0.10" />
+    <param name="range_max" value="50.0" />
+    <param name="angle_min_deg" value="-180.0" />
+    <param name="angle_max_deg" value="180.0" />
+    <param name="angle_increment_deg" value="0.20" />
+    <param name="boundary_point_count" value="1800" />
+    <param name="target_enabled" value="true" />
+    <param name="target_x" value="0.0" />
+    <param name="target_y" value="0.0" />
+    <param name="target_radius_x" value="$(arg target_radius_x)" />
+    <param name="target_radius_y" value="$(arg target_radius_y)" />
+    <param name="target_yaw_deg" value="$(arg target_yaw_deg)" />
+    <param name="target_waviness_amplitude" value="$(arg target_waviness_amplitude)" />
+    <param name="target_waviness_frequency" value="$(arg target_waviness_frequency)" />
+    <param name="target_radial_noise_stddev" value="$(arg target_radial_noise_stddev)" />
+    <param name="target_enable_gap" value="$(arg target_enable_gap)" />
+    <param name="target_gap_center_deg" value="$(arg target_gap_center_deg)" />
+    <param name="target_gap_width_deg" value="$(arg target_gap_width_deg)" />
+    <param name="neighbor_enabled" value="$(arg neighbor_enabled)" />
+    <!-- 相邻树中心约相距 8 m，接近传统成龄荔枝园常见的大株距量级。 -->
+    <param name="neighbor_x" value="-8.0" />
+    <param name="neighbor_y" value="1.0" />
+    <param name="neighbor_radius_x" value="2.75" />
+    <param name="neighbor_radius_y" value="2.40" />
+    <param name="neighbor_yaw_deg" value="-15.0" />
+    <param name="neighbor_waviness_amplitude" value="0.04" />
+    <param name="neighbor_waviness_frequency" value="5" />
+    <param name="neighbor_radial_noise_stddev" value="0.012" />
+    <param name="neighbor_enable_gap" value="false" />
+    <param name="outlier_count" value="$(arg outlier_count)" />
+    <param name="outlier_min_range" value="0.45" />
+    <param name="outlier_max_range" value="8.0" />
+    <param name="outlier_angle_min_deg" value="-70.0" />
+    <param name="outlier_angle_max_deg" value="70.0" />
+  </node>
+  <node pkg="mid360_processor"
+        type="odom_listener_5_dipan"
+        name="canopy_tracker_node"
+        output="screen">
+    <param name="clockwise" value="$(arg clockwise)" />
+    <param name="step_distance" value="$(arg step_distance)" />
+    <param name="target_distance" value="$(arg target_distance)" />
+    <param name="distance_tolerance" value="$(arg distance_tolerance)" />
+    <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="max_angular_speed" value="$(arg max_angular_speed)" />
+    <param name="work_pause_duration" value="$(arg work_pause_duration)" />
+    <param name="return_distance_threshold" value="$(arg return_distance_threshold)" />
+    <param name="heading_fallback_timeout" value="$(arg heading_fallback_timeout)" />
+    <param name="max_heading_change_deg" value="$(arg max_heading_change_deg)" />
+    <param name="max_orbit_delta_deg" value="$(arg max_orbit_delta_deg)" />
+    <param name="k_turn_move" value="$(arg k_turn_move)" />
+    <param name="k_orbit_heading" value="$(arg k_orbit_heading)" />
+    <param name="k_bearing_move" value="$(arg k_bearing_move)" />
+    <param name="k_distance_move" value="$(arg k_distance_move)" />
+    <param name="k_turn_align" value="$(arg k_turn_align)" />
+    <param name="k_orbit_feedforward" value="$(arg k_orbit_feedforward)" />
+    <!-- 不规则椭圆树冠的局部拟合线不适合单独判断正对，默认以质心方位为准。 -->
+    <param name="facing_line_weight" value="0.0" />
+    <param name="facing_bearing_weight" value="1.0" />
+    <param name="tree_filter_alpha" value="0.02" />
+    <!-- 单树仿真锁定首次树心，保证累计角度确实围绕同一个树心计算。 -->
+    <param name="lock_tree_estimate" value="true" />
+    <param name="heading_roi_min_deg" value="$(arg heading_roi_min_deg)" />
+    <param name="heading_roi_max_deg" value="$(arg heading_roi_max_deg)" />
+    <param name="facing_roi_min_deg" value="$(arg facing_roi_min_deg)" />
+    <param name="facing_roi_max_deg" value="$(arg facing_roi_max_deg)" />
+    <!--
+      控制节点用这个参数估计树心并累计绕树角度。
+      椭圆树冠没有唯一半径，这里先用平均半径近似。
+    -->
+    <param name="canopy_radius_for_orbit" value="2.75" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+    <param name="laser_x_offset" value="$(arg laser_x_offset)" />
+    <param name="laser_y_offset" value="$(arg laser_y_offset)" />
+    <param name="cmd_vel_topic" value="/cmd_vel" />
+    <param name="odom_topic" value="/Odometry" />
+    <param name="scan_topic" value="/scan_2d" />
+    <param name="laser_frame" value="livox_frame" />
+  </node>
+
+  <node pkg="rviz"
+      type="rviz"
+      name="rviz"
+      if="$(arg launch_rviz)"
+      args="-d $(find mid360_processor)/rviz/canopy_sim.rviz"
+      output="screen" />
+</launch>

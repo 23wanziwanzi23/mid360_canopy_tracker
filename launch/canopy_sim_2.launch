@@ -26,8 +26,19 @@
   <arg name="max_angular_speed" default="0.25" />
   <!-- 每个作业点停顿时间，单位 s。默认 1 秒，方便观察状态机。 -->
   <arg name="work_pause_duration" default="1.0" />
-  <!-- 控制节点提取树冠点的侧向视野角。绕树时树在侧方，建议至少 100 度。 -->
-  <arg name="roi_angle_limit_deg" default="120.0" />
+  <!-- 航向 ROI：雷达右侧点用于拟合绕树移动方向，角度单位 deg。 -->
+  <arg name="heading_roi_min_deg" default="-70.0" />
+  <arg name="heading_roi_max_deg" default="-20.0" />
+  <!-- 正对 ROI：雷达前方点用于判断机器是否重新正对树冠，角度单位 deg。 -->
+  <arg name="facing_roi_min_deg" default="-30.0" />
+  <arg name="facing_roi_max_deg" default="30.0" />
+  <!--
+    正对误差融合权重。控制节点会自动归一化二者之和：
+      line_weight 使用 PCA 拟合线是否接近横向；
+      bearing_weight 使用前方 ROI 质心是否接近雷达正前方。
+  -->
+  <arg name="facing_line_weight" default="0.6" />
+  <arg name="facing_bearing_weight" default="0.4" />
   <!-- 仿真树冠半径，同时给控制节点用于估计树心和累计绕树角度。 -->
   <arg name="canopy_radius" default="0.65" />
   <arg name="laser_yaw_offset_deg" default="-90.0" />
@@ -84,7 +95,12 @@
     <param name="linear_speed" value="$(arg linear_speed)" />
     <param name="max_angular_speed" value="$(arg max_angular_speed)" />
     <param name="work_pause_duration" value="$(arg work_pause_duration)" />
-    <param name="roi_angle_limit_deg" value="$(arg roi_angle_limit_deg)" />
+    <param name="heading_roi_min_deg" value="$(arg heading_roi_min_deg)" />
+    <param name="heading_roi_max_deg" value="$(arg heading_roi_max_deg)" />
+    <param name="facing_roi_min_deg" value="$(arg facing_roi_min_deg)" />
+    <param name="facing_roi_max_deg" value="$(arg facing_roi_max_deg)" />
+    <param name="facing_line_weight" value="$(arg facing_line_weight)" />
+    <param name="facing_bearing_weight" value="$(arg facing_bearing_weight)" />
     <param name="canopy_radius_for_orbit" value="$(arg canopy_radius)" />
     <param name="cmd_vel_topic" value="/cmd_vel" />
     <param name="odom_topic" value="/Odometry" />

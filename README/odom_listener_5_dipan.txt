@@ -6,3 +6,76 @@
 从 /Odometry 读取机器人当前位置和航向角。
 
 根据树冠位置发布 /cmd_vel，控制履带底盘分段绕树走，每走一段后转向正对树冠，绕满一圈后停车。
+
+
+一、状态机调试
+
+节点会在 /canopy_tracker_state 上发布 std_msgs/String，并使用锁存发布器保存最近状态。
+新开终端后可以执行：
+
+  source ~/fast_lio_ws/devel/setup.bash
+  rostopic echo /canopy_tracker_state
+
+各状态含义：
+
+  WORK_PAUSE          底盘停车，等待 work_pause_duration 秒，模拟采收作业。
+  ALIGN_TANGENT       作业结束后检查并调整雷达是否正对树冠。
+  MOVE_AROUND_CANOPY  沿 heading ROI 拟合方向移动 step_distance 米。
+  FACE_CANOPY         一小段移动结束后原地转动，使雷达重新正对树冠。
+  STOPPED             累计绕树角度达到 360 deg，持续发布零速度。
+
+正常循环应为：
+
+  WORK_PAUSE -> ALIGN_TANGENT -> MOVE_AROUND_CANOPY
+  -> FACE_CANOPY -> WORK_PAUSE
+
+
+二、RViz 中检查双 ROI 和 PCA 拟合线
+
+启动仿真：
+
+  roslaunch mid360_processor canopy_sim_od_5.launch
+
+RViz 的 Fixed Frame 设置为 odom，然后添加四个 Marker 显示项：
+
+  /heading_roi_points  蓝色点；应只覆盖雷达右侧 -70 deg ~ -20 deg。
+  /facing_roi_points   橙红色点；应只覆盖雷达前方 -30 deg ~ +30 deg。
+  /heading_fit_line    青色线；穿过 heading ROI 质心，表示 PCA 航向拟合结果。
+  /facing_fit_line     紫色线；穿过 facing ROI 质心，正对树冠时应近似横向。
+
+同时可添加 /steering_vector。绿色箭头表示当前控制所采用的目标方向。
+若拟合所需的有效点少于 5 个，对应拟合线 Marker 会被删除，控制节点也会在
+需要该 ROI 的状态下停车，不会继续使用旧结果。
+
+
+三、更稳的正对树冠判断
+
+FACE_CANOPY 和 ALIGN_TANGENT 不再只依赖 PCA 线角，而是融合两个误差：
+
+  1. line_error：前方 ROI 拟合线相对横向 90 deg 的误差。
+  2. bearing_error：前方 ROI 质心相对雷达正前方 0 deg 的方位误差。
+
+融合结果为：
+
+  facing_error = facing_line_weight * line_error
+               + facing_bearing_weight * bearing_error
+
+默认权重为 0.6 和 0.4。节点会自动把两个非负权重归一化，因此它们不必严格相加为 1。
+可在启动时覆盖，例如：
+
+  roslaunch mid360_processor canopy_sim_od_5.launch \
+    facing_line_weight:=0.5 facing_bearing_weight:=0.5
+
+如果不规则枝叶导致 PCA 拟合线明显抖动，可适当降低 facing_line_weight；如果质心被
+缺口或离群点明显拉偏，则可适当降低 facing_bearing_weight。调整时应同时观察两种
+ROI Marker、拟合线和 /canopy_tracker_state，避免只根据运动轨迹猜测原因。
+
+
+四、关键坐标系假设
+
+  base_link x 轴：履带底盘车头方向。
+  livox_frame x 轴：Mid-360 正前方，也就是树冠方向。
+  当前雷达朝车体右侧，因此 laser_yaw_offset_deg=-90.0。
+
+如果真实安装改成雷达朝车体左侧，控制参数、URDF 和仿真节点中的安装 yaw 必须同步
+改成 +90 deg，并重新检查 clockwise 和两个 ROI 的方向。

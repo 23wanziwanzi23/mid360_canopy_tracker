@@ -104,6 +104,8 @@ private:
     double angle_increment_deg_ = 0.5;
     double laser_yaw_offset_deg_ = -90.0;
     double laser_yaw_offset_rad_ = -M_PI / 2.0;
+    double laser_x_offset_ = 0.0;
+    double laser_y_offset_ = 0.0;
 
     int boundary_point_count_ = 720;
     int outlier_count_ = 0;
@@ -131,6 +133,8 @@ private:
         pnh_.param("angle_max_deg", angle_max_deg_, 180.0);
         pnh_.param("angle_increment_deg", angle_increment_deg_, 0.5);
         pnh_.param("laser_yaw_offset_deg", laser_yaw_offset_deg_, -90.0);
+        pnh_.param("laser_x_offset", laser_x_offset_, 0.0);
+        pnh_.param("laser_y_offset", laser_y_offset_, 0.0);
 
         pnh_.param("boundary_point_count", boundary_point_count_, 720);
         pnh_.param("outlier_count", outlier_count_, 0);
@@ -332,8 +336,16 @@ private:
     }
 
     bool transformOdomPointToLaser(const geometry_msgs::Point& point_odom, geometry_msgs::Point& point_laser) const {
-        const double dx = point_odom.x - robot_x_;
-        const double dy = point_odom.y - robot_y_;
+        // base_link 位于底盘几何中心。先根据底盘 yaw 把雷达安装偏移转换到
+        // odom 坐标系，再以真实雷达位置为原点生成扫描数据。
+        const double laser_x_odom = robot_x_
+                                  + std::cos(robot_yaw_) * laser_x_offset_
+                                  - std::sin(robot_yaw_) * laser_y_offset_;
+        const double laser_y_odom = robot_y_
+                                  + std::sin(robot_yaw_) * laser_x_offset_
+                                  + std::cos(robot_yaw_) * laser_y_offset_;
+        const double dx = point_odom.x - laser_x_odom;
+        const double dy = point_odom.y - laser_y_odom;
         const double laser_yaw_odom = robot_yaw_ + laser_yaw_offset_rad_;
 
         // odom -> laser 是绕 z 轴反向旋转 laser_yaw_odom。
@@ -438,5 +450,3 @@ int main(int argc, char** argv) {
     sim.spin();
     return 0;
 }
-
-

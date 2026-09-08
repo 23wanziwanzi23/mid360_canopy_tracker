@@ -39,6 +39,7 @@ public:
 
         // 发布 RViz 中用于显示小车的 Marker。
         robot_marker_pub_ = nh_.advertise<visualization_msgs::Marker>("/sim_robot_marker", 1);
+        lidar_marker_pub_ = nh_.advertise<visualization_msgs::Marker>("/sim_lidar_marker", 1);
 
         last_time_ = ros::Time::now();
         last_cmd_time_ = ros::Time(0);
@@ -62,6 +63,7 @@ private:
     ros::Subscriber cmd_sub_;
     ros::Publisher odom_pub_;
     ros::Publisher robot_marker_pub_;
+    ros::Publisher lidar_marker_pub_;
     tf::TransformBroadcaster tf_broadcaster_;
 
     // 话题和坐标系名称。默认值与 odom_listener_5_dipan.cpp 对齐。
@@ -85,6 +87,13 @@ private:
     double max_linear_speed_ = 0.4;
     double max_angular_speed_ = 0.8;
 
+    // 机器人和雷达的实际几何尺寸，仅用于 TF 与 RViz 按比例显示。
+    double robot_length_ = 1.6;       ///< 底盘前后长度，单位：m。
+    double robot_width_ = 1.0;        ///< 底盘左右宽度，单位：m。
+    double robot_marker_height_ = 0.2; ///< 二维 Marker 的显示厚度，单位：m。
+    double laser_x_offset_ = 0.0;     ///< 雷达相对 base_link 的前向安装位置，单位：m。
+    double laser_y_offset_ = 0.0;     ///< 雷达相对 base_link 的左向安装位置，单位：m；负值表示右侧。
+
     // 保存最近一次收到的 /cmd_vel。
     geometry_msgs::Twist latest_cmd_;
     ros::Time last_cmd_time_;
@@ -100,6 +109,11 @@ private:
         pnh_.param("cmd_timeout", cmd_timeout_, 0.5);
         pnh_.param("max_linear_speed", max_linear_speed_, 0.4);
         pnh_.param("max_angular_speed", max_angular_speed_, 0.8);
+        pnh_.param("robot_length", robot_length_, 1.6);
+        pnh_.param("robot_width", robot_width_, 1.0);
+        pnh_.param("robot_marker_height", robot_marker_height_, 0.2);
+        pnh_.param("laser_x_offset", laser_x_offset_, 0.0);
+        pnh_.param("laser_y_offset", laser_y_offset_, 0.0);
 
         /*
          * 初始位姿很重要。
@@ -114,6 +128,9 @@ private:
         pnh_.param("laser_yaw_offset_deg", laser_yaw_offset_deg_, -90.0);
         yaw_ = init_yaw_deg_ * M_PI / 180.0;
         laser_yaw_offset_rad_ = laser_yaw_offset_deg_ * M_PI / 180.0;
+        robot_length_ = std::max(0.1, robot_length_);
+        robot_width_ = std::max(0.1, robot_width_);
+        robot_marker_height_ = std::max(0.01, robot_marker_height_);
     }
 
     static double clamp(double value, double low, double high) {
@@ -168,6 +185,7 @@ private:
 
         publishOdom(now, v, w);
         publishRobotMarker(now);
+        publishLidarMarker(now);
     }
 
     void publishOdom(const ros::Time& stamp, double v, double w) {
@@ -199,8 +217,8 @@ private:
         laser_tf.header.stamp = stamp;
         laser_tf.header.frame_id = base_frame_;
         laser_tf.child_frame_id = laser_frame_;
-        laser_tf.transform.translation.x = 0.0;
-        laser_tf.transform.translation.y = 0.0;
+        laser_tf.transform.translation.x = laser_x_offset_;
+        laser_tf.transform.translation.y = laser_y_offset_;
         laser_tf.transform.translation.z = 0.0;
         laser_tf.transform.rotation = tf::createQuaternionMsgFromYaw(laser_yaw_offset_rad_);
         tf_broadcaster_.sendTransform(laser_tf);
@@ -233,16 +251,46 @@ private:
         marker.pose.position.z = 0.05;
         marker.pose.orientation = tf::createQuaternionMsgFromYaw(yaw_);
 
-        // scale.x 是箭头长度，scale.y/scale.z 控制箭头粗细。
-        marker.scale.x = 0.6;
-        marker.scale.y = 0.28;
-        marker.scale.z = 0.18;
+        // 从上往下看，箭头的总长和宽度分别对应真实底盘的 1.6 m 和 1.0 m。
+        marker.scale.x = robot_length_;
+        marker.scale.y = robot_width_;
+        marker.scale.z = robot_marker_height_;
         marker.color.r = 0.1;
         marker.color.g = 0.45;
         marker.color.b = 1.0;
         marker.color.a = 1.0;
         marker.lifetime = ros::Duration(0.2);
         robot_marker_pub_.publish(marker);
+    }
+
+    /**
+     * @brief 按 Mid-360 的真实外形尺寸发布雷达 Marker。
+     *
+     * 官方外形约为 65 mm × 65 mm × 60 mm。Marker 固定在 livox_frame
+     * 原点，会通过 base_link -> livox_frame TF 自动跟随底盘右侧安装位置。
+     *
+     * @param stamp Marker 时间戳。
+     * @return 无。
+     */
+    void publishLidarMarker(const ros::Time& stamp) {
+        visualization_msgs::Marker marker;
+        marker.header.stamp = stamp;
+        marker.header.frame_id = laser_frame_;
+        marker.ns = "mid360_body";
+        marker.id = 0;
+        marker.type = visualization_msgs::Marker::CUBE;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.position.z = 0.03;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.065;
+        marker.scale.y = 0.065;
+        marker.scale.z = 0.060;
+        marker.color.r = 0.1;
+        marker.color.g = 0.9;
+        marker.color.b = 0.3;
+        marker.color.a = 1.0;
+        marker.lifetime = ros::Duration(0.2);
+        lidar_marker_pub_.publish(marker);
     }
 };
 
