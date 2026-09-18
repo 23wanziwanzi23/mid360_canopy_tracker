@@ -1,0 +1,120 @@
+digraph GazeboCanopyControl {
+  graph [
+    rankdir=TB,
+    bgcolor="white",
+    pad="0.25",
+    nodesep="0.28",
+    ranksep="0.42",
+    fontname="Noto Sans CJK SC",
+    fontsize=16,
+    label="Gazebo 树冠绕行控制流程",
+    labelloc="t"
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="#F5F7FA",
+    color="#52616B",
+    fontname="Noto Sans CJK SC",
+    fontsize=11,
+    margin="0.12,0.08"
+  ];
+  edge [
+    color="#52616B",
+    fontname="Noto Sans CJK SC",
+    fontsize=10,
+    arrowsize=0.75
+  ];
+
+  start [shape=ellipse, fillcolor="#D8F3DC", label="启动 gazebo_canopy_sim.launch\n初始状态：WORK_PAUSE"];
+  wait_odom [shape=diamond, fillcolor="#FFF3BF", label="收到有效 /Odometry？"];
+  hold_no_odom [fillcolor="#FFE3E3", label="发布零速度\n等待里程计"];
+  init_odom [label="记录整圈起点和分段起点\n更新当前位置与车体航向"];
+  odom_loop [label="里程计回调\n围绕固定树心累计有符号净角度\n拒绝单帧大于 15° 的跳变"];
+  scan [label="雷达回调 /scan_2d（10 Hz）\n提取航向 ROI 和正对 ROI"];
+  raw_valid [shape=diamond, fillcolor="#FFF3BF", label="两个 ROI 是否都缺少有效点？"];
+  scan_stop [fillcolor="#FFE3E3", label="超过扫描超时后停车\n保持当前状态"];
+  fits [label="航向 ROI：PCA 局部切线\n正对 ROI：距离带筛选 + 两阶段稳健 PCA"];
+  facing_valid [shape=diamond, fillcolor="#FFF3BF", label="作业面拟合质量合格？\n点数/覆盖/RMS/线性比"];
+  facing_stop [fillcolor="#FFE3E3", label="立即发布零速度\n清空正对稳定计时\n保持当前状态"];
+  tree [label="首次有效观测估计树心\n默认锁定树心"];
+  complete [shape=diamond, fillcolor="#FFF3BF", label="方向净角度 ≥ 360°\n且距起点 ≤ 0.50 m？"];
+  stopped [shape=doubleoctagon, fillcolor="#FFCCCC", label="STOPPED\n持续发布零速度"];
+  dispatch [shape=diamond, fillcolor="#DDEBFF", label="当前状态"];
+
+  pause [fillcolor="#E7F5FF", label="WORK_PAUSE\n停车作业 1.0 s"];
+  pause_done [shape=diamond, fillcolor="#FFF3BF", label="停顿时间到？"];
+
+  align [fillcolor="#E7F5FF", label="ALIGN_TANGENT\n移动前检查右侧作业面"];
+  align_ok [shape=diamond, fillcolor="#FFF3BF", label="线误差 ≤ 2° 且方位误差 ≤ 5°\n连续稳定 0.4 s？"];
+  align_turn [fillcolor="#F3E8FF", label="原地转向\nlinear.x = 0\nangular.z 由 0.85 线误差 + 0.15 方位误差决定"];
+
+  move [fillcolor="#E7F5FF", label="MOVE_AROUND_CANOPY\n雷达局部切线主导航\n移动中闭环保持右侧距离"];
+  heading_valid [shape=diamond, fillcolor="#FFF3BF", label="航向 ROI 有效？"];
+  lidar_control [label="角速度 = 绕行前馈\n+ 航向修正 + 方位修正 + 距离修正\n根据误差降低线速度"];
+  fallback_time [shape=diamond, fillcolor="#FFF3BF", label="失效时间 ≤ 0.5 s？"];
+  fallback [label="使用固定树心几何切线\n短时兜底"];
+  heading_stop [fillcolor="#FFE3E3", label="航向持续丢失\n停车并保持 MOVE 状态"];
+  segment [shape=diamond, fillcolor="#FFF3BF", label="分段里程 ≥ 0.50 m？"];
+  distance_ok [shape=diamond, fillcolor="#FFF3BF", label="右侧距离在\n0.50 ± 0.05 m？"];
+  continue_adjust [label="继续向前移动\n边走边调整距离"];
+
+  face [fillcolor="#E7F5FF", label="FACE_CANOPY\n分段结束后的作业面正对"];
+  face_ok [shape=diamond, fillcolor="#FFF3BF", label="线误差 ≤ 2° 且方位误差 ≤ 5°\n连续稳定 0.4 s？"];
+  face_turn [fillcolor="#F3E8FF", label="原地转向\nlinear.x = 0\n未满足则重新计时"];
+
+  start -> wait_odom;
+  wait_odom -> hold_no_odom [label="否"];
+  hold_no_odom -> wait_odom;
+  wait_odom -> init_odom [label="是"];
+  init_odom -> scan;
+  init_odom -> odom_loop [style=dashed, label="每帧里程计"];
+  odom_loop -> odom_loop [style=dashed];
+  scan -> raw_valid;
+  raw_valid -> scan_stop [label="是"];
+  scan_stop -> scan;
+  raw_valid -> fits [label="否"];
+  fits -> facing_valid;
+  facing_valid -> facing_stop [label="否"];
+  facing_stop -> scan;
+  facing_valid -> tree [label="是"];
+  tree -> complete;
+  complete -> stopped [label="是"];
+  complete -> dispatch [label="否；角度够但未返航也继续"];
+
+  dispatch -> pause [label="WORK_PAUSE"];
+  pause -> pause_done;
+  pause_done -> pause [label="否"];
+  pause_done -> align [label="是"];
+
+  dispatch -> align [label="ALIGN_TANGENT"];
+  align -> align_ok;
+  align_ok -> align_turn [label="否"];
+  align_turn -> scan;
+  align_ok -> move [label="是\n重置分段起点"];
+
+  dispatch -> move [label="MOVE_AROUND_CANOPY"];
+  move -> heading_valid;
+  heading_valid -> lidar_control [label="是"];
+  heading_valid -> fallback_time [label="否"];
+  fallback_time -> fallback [label="是"];
+  fallback_time -> heading_stop [label="否"];
+  heading_stop -> scan;
+  fallback -> segment;
+  lidar_control -> segment;
+  segment -> scan [label="否；继续移动"];
+  segment -> distance_ok [label="是"];
+  distance_ok -> face [label="是；先停车"];
+  distance_ok -> continue_adjust [label="否"];
+  continue_adjust -> scan;
+
+  dispatch -> face [label="FACE_CANOPY"];
+  face -> face_ok;
+  face_ok -> face_turn [label="否"];
+  face_turn -> scan;
+  face_ok -> pause [label="是"];
+
+  pause -> scan [style=dashed, label="下一帧"];
+  move -> scan [style=dashed, label="发布 /cmd_vel 后"];
+  stopped -> stopped;
+}

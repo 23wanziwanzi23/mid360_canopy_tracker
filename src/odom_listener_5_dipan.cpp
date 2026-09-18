@@ -39,6 +39,10 @@ struct LineFitResult {
     double centroid_x = 0.0;   ///< ROI 点云质心 x 坐标，单位：m，坐标系：雷达坐标系。
     double centroid_y = 0.0;   ///< ROI 点云质心 y 坐标，单位：m，坐标系：雷达坐标系。
     size_t point_count = 0;    ///< 参与拟合的点数量。
+    size_t inlier_count = 0;   ///< 二次稳健拟合保留的内点数量。
+    double lateral_span = 0.0; ///< 内点沿作业面方向的覆盖宽度，单位：m。
+    double rms_residual = std::numeric_limits<double>::infinity(); ///< 点到拟合线的 RMS 残差，单位：m。
+    double linearity_ratio = 0.0; ///< PCA 主、次特征值比，越大越接近直线。
 };
 
 /**
@@ -52,7 +56,7 @@ struct LineFitResult {
  *   - /cmd_vel：底盘速度控制指令。
  *   - /steering_vector：RViz 中显示目标航向的箭头。
  *   - /heading_roi_points：RViz 中显示右侧航向 ROI 点。
- *   - /facing_roi_points：RViz 中显示前方正对判断 ROI 点。
+ *   - /facing_roi_points：RViz 中显示右侧作业面正对判断的内点。
  *   - /heading_roi_region：RViz 中用蓝色半透明扇形显示航向检测有效范围。
  *   - /facing_roi_region：RViz 中用橙色半透明扇形显示正对检测有效范围。
  *   - /heading_fit_line：RViz 中显示航向 ROI 的 PCA 拟合线。
@@ -116,6 +120,7 @@ private:
     ros::Time state_enter_time_;                  ///< 进入当前状态的时间。
     ros::Time last_valid_scan_time_;              ///< 最近一次检测到有效树冠点的时间。
     ros::Time last_valid_heading_time_;           ///< 最近一次航向 ROI 拟合有效的时间。
+    ros::Time facing_alignment_stable_since_;     ///< 作业面开始连续满足正对条件的时间。
 
     double target_distance_ = 0.3;     ///< 绕行时小车右侧到树冠表面的目标距离，单位：m。
     double distance_tolerance_ = 0.05; ///< 分段结束时允许的右侧距离误差，单位：m。
@@ -126,13 +131,22 @@ private:
     double k_orbit_heading_ = 0.8;     ///< 几何切向航向误差到角速度的比例系数。
     double k_bearing_move_ = 0.8;      ///< 移动时树冠质心方位误差到角速度的比例系数。
     double k_distance_move_ = 0.8;     ///< 移动时右侧树冠距离误差到角速度的比例系数。
-    double k_turn_align_ = 1.5;        ///< 原地对准状态下角度误差到角速度的比例系数。
+    double k_turn_align_ = 0.8;        ///< 原地对准状态下角度误差到角速度的比例系数。
     double k_orbit_feedforward_ = 1.0; ///< 绕树前馈角速度系数，0 表示关闭前馈。
     double max_angular_speed_ = 0.5;   ///< 最大角速度限幅，单位：rad/s。
-    double facing_line_weight_ = 0.6;  ///< 正对误差中 PCA 线角误差的权重，范围 0~1。
-    double facing_bearing_weight_ = 0.4; ///< 正对误差中质心方位误差的权重，范围 0~1。
+    double facing_line_weight_ = 0.85;  ///< 正对误差中 PCA 线角误差的权重，范围 0~1。
+    double facing_bearing_weight_ = 0.15; ///< 正对误差中质心方位误差的权重，范围 0~1。
+    double work_surface_length_ = 1.0;       ///< 右侧作业面的有效前后长度，单位：m。
+    double facing_depth_band_ = 0.4;         ///< 正对拟合相对最近树冠的深度带，单位：m。
+    int facing_min_points_ = 20;             ///< 正对稳健拟合所需的最少内点数。
+    double facing_min_span_ = 0.4;           ///< 内点沿作业面方向的最小覆盖宽度，单位：m。
+    double facing_max_rms_ = 0.08;           ///< 正对拟合允许的最大 RMS 残差，单位：m。
+    double facing_min_linearity_ = 4.0;      ///< 正对拟合允许的最小 PCA 线性比。
+    double facing_bearing_tolerance_rad_ = 5.0 * M_PI / 180.0; ///< 树冠质心方位允许误差。
+    double facing_stable_duration_ = 0.4;    ///< 正对条件必须连续满足的时间，单位：s。
+    double min_align_angular_speed_ = 0.02;  ///< 未对准时原地转向的最小有效角速度。
 
-    double align_tolerance_rad_ = 5.0 * M_PI / 180.0;     ///< 对准允许误差，单位：rad。
+    double align_tolerance_rad_ = 2.0 * M_PI / 180.0;     ///< 作业面与树冠切线的允许误差，单位：rad。
     double scan_timeout_ = 0.5;                           ///< 雷达目标丢失超时时间，单位：s。
     double work_pause_duration_ = 1.0;                    ///< 每个作业点停车等待时间，单位：s。
     double tree_filter_alpha_ = 0.15;                     ///< 树心低通滤波系数，范围 0~1。
@@ -149,8 +163,8 @@ private:
 
     double heading_roi_min_rad_ = -120.0 * M_PI / 180.0; ///< 航向 ROI 最小角，单位：rad。
     double heading_roi_max_rad_ = -20.0 * M_PI / 180.0; ///< 航向 ROI 最大角，单位：rad。
-    double facing_roi_min_rad_ = -30.0 * M_PI / 180.0;  ///< 正对判断 ROI 最小角，单位：rad。
-    double facing_roi_max_rad_ = 30.0 * M_PI / 180.0;   ///< 正对判断 ROI 最大角，单位：rad。
+    double facing_roi_min_rad_ = -45.0 * M_PI / 180.0;  ///< 正对判断 ROI 最小角，单位：rad。
+    double facing_roi_max_rad_ = 45.0 * M_PI / 180.0;   ///< 正对判断 ROI 最大角，单位：rad。
 
     std::string cmd_vel_topic_ = "/cmd_vel";  ///< 底盘速度控制话题名。
     std::string odom_topic_ = "/Odometry";    ///< 里程计话题名。
@@ -229,6 +243,14 @@ private:
         pnh_.param("max_angular_speed", max_angular_speed_, max_angular_speed_);
         pnh_.param("facing_line_weight", facing_line_weight_, facing_line_weight_);
         pnh_.param("facing_bearing_weight", facing_bearing_weight_, facing_bearing_weight_);
+        pnh_.param("work_surface_length", work_surface_length_, work_surface_length_);
+        pnh_.param("facing_depth_band", facing_depth_band_, facing_depth_band_);
+        pnh_.param("facing_min_points", facing_min_points_, facing_min_points_);
+        pnh_.param("facing_min_span", facing_min_span_, facing_min_span_);
+        pnh_.param("facing_max_rms", facing_max_rms_, facing_max_rms_);
+        pnh_.param("facing_min_linearity", facing_min_linearity_, facing_min_linearity_);
+        pnh_.param("facing_stable_duration", facing_stable_duration_, facing_stable_duration_);
+        pnh_.param("min_align_angular_speed", min_align_angular_speed_, min_align_angular_speed_);
         pnh_.param("scan_timeout", scan_timeout_, scan_timeout_);
         pnh_.param("work_pause_duration", work_pause_duration_, work_pause_duration_);
         pnh_.param("tree_filter_alpha", tree_filter_alpha_, tree_filter_alpha_);
@@ -245,6 +267,7 @@ private:
         pnh_.param("laser_y_offset", laser_y_offset_, laser_y_offset_);
 
         double align_tolerance_deg = align_tolerance_rad_ * 180.0 / M_PI;
+        double facing_bearing_tolerance_deg = facing_bearing_tolerance_rad_ * 180.0 / M_PI;
         double max_orbit_delta_deg = max_orbit_delta_rad_ * 180.0 / M_PI;
         double max_heading_change_deg = max_heading_change_rad_ * 180.0 / M_PI;
         double laser_yaw_offset_deg = laser_yaw_offset_rad_ * 180.0 / M_PI;
@@ -254,6 +277,8 @@ private:
         double facing_roi_max_deg = facing_roi_max_rad_ * 180.0 / M_PI;
 
         pnh_.param("align_tolerance_deg", align_tolerance_deg, align_tolerance_deg);
+        pnh_.param("facing_bearing_tolerance_deg", facing_bearing_tolerance_deg,
+                    facing_bearing_tolerance_deg);
         pnh_.param("max_orbit_delta_deg", max_orbit_delta_deg, max_orbit_delta_deg);
         pnh_.param("max_heading_change_deg", max_heading_change_deg, max_heading_change_deg);
         pnh_.param("laser_yaw_offset_deg", laser_yaw_offset_deg, laser_yaw_offset_deg);
@@ -263,6 +288,7 @@ private:
         pnh_.param("facing_roi_max_deg", facing_roi_max_deg, facing_roi_max_deg);
 
         align_tolerance_rad_ = align_tolerance_deg * M_PI / 180.0;
+        facing_bearing_tolerance_rad_ = facing_bearing_tolerance_deg * M_PI / 180.0;
         max_orbit_delta_rad_ = max_orbit_delta_deg * M_PI / 180.0;
         max_heading_change_rad_ = max_heading_change_deg * M_PI / 180.0;
         laser_yaw_offset_rad_ = laser_yaw_offset_deg * M_PI / 180.0;
@@ -280,6 +306,16 @@ private:
         target_distance_ = std::max(0.05, target_distance_);
         distance_tolerance_ = clamp(distance_tolerance_, 0.01, target_distance_);
         max_angular_speed_ = std::max(0.05, max_angular_speed_);
+        work_surface_length_ = std::max(0.20, work_surface_length_);
+        facing_depth_band_ = std::max(0.05, facing_depth_band_);
+        facing_min_points_ = std::max(5, facing_min_points_);
+        facing_min_span_ = clamp(facing_min_span_, 0.05, work_surface_length_);
+        facing_max_rms_ = std::max(0.01, facing_max_rms_);
+        facing_min_linearity_ = std::max(1.0, facing_min_linearity_);
+        facing_bearing_tolerance_rad_ = clamp(
+            facing_bearing_tolerance_rad_, 0.5 * M_PI / 180.0, 45.0 * M_PI / 180.0);
+        facing_stable_duration_ = std::max(0.0, facing_stable_duration_);
+        min_align_angular_speed_ = clamp(min_align_angular_speed_, 0.0, max_angular_speed_);
         work_pause_duration_ = std::max(0.0, work_pause_duration_);
         tree_filter_alpha_ = clamp(tree_filter_alpha_, 0.01, 1.0);
         max_orbit_delta_rad_ = clamp(max_orbit_delta_rad_, 1.0 * M_PI / 180.0,
@@ -296,9 +332,9 @@ private:
         facing_bearing_weight_ = std::max(0.0, facing_bearing_weight_);
         const double facing_weight_sum = facing_line_weight_ + facing_bearing_weight_;
         if (facing_weight_sum < 1e-6) {
-            ROS_WARN("正对判断的两个误差权重均为零，已恢复默认权重 0.6 和 0.4");
-            facing_line_weight_ = 0.6;
-            facing_bearing_weight_ = 0.4;
+            ROS_WARN("正对判断的两个误差权重均为零，已恢复默认权重 0.85 和 0.15");
+            facing_line_weight_ = 0.85;
+            facing_bearing_weight_ = 0.15;
         } else {
             facing_line_weight_ /= facing_weight_sum;
             facing_bearing_weight_ /= facing_weight_sum;
@@ -366,6 +402,7 @@ private:
     LineFitResult fitLineByPca(const std::vector<Point2D>& points, double reference_angle) const {
         LineFitResult result;
         result.point_count = points.size();
+        result.inlier_count = points.size();
         if (points.size() < 5) {
             return result;
         }
@@ -390,6 +427,8 @@ private:
         double cov_xx = 0.0;
         double cov_yy = 0.0;
         double cov_xy = 0.0;
+        double min_y = std::numeric_limits<double>::infinity();
+        double max_y = -std::numeric_limits<double>::infinity();
 
         for (const auto& p : points) {
             const double dx = p.x - mean_x;
@@ -397,9 +436,17 @@ private:
             cov_xx += dx * dx;
             cov_yy += dy * dy;
             cov_xy += dx * dy;
+            min_y = std::min(min_y, p.y);
+            max_y = std::max(max_y, p.y);
         }
 
         const double raw_line_angle = 0.5 * std::atan2(2.0 * cov_xy, cov_xx - cov_yy);
+        const double trace = cov_xx + cov_yy;
+        const double discriminant = std::sqrt(
+            std::max(0.0, (cov_xx - cov_yy) * (cov_xx - cov_yy)
+                            + 4.0 * cov_xy * cov_xy));
+        const double lambda_max = 0.5 * (trace + discriminant);
+        const double lambda_min = std::max(0.0, 0.5 * (trace - discriminant));
 
         result.valid = true;
         result.line_angle = chooseClosestLineAngle(raw_line_angle, reference_angle);
@@ -412,6 +459,116 @@ private:
         result.bearing = std::atan2(mean_y, mean_x);
         result.centroid_x = mean_x;
         result.centroid_y = mean_y;
+        result.lateral_span = max_y - min_y;
+        result.linearity_ratio = lambda_max / std::max(1e-9, lambda_min);
+
+        const double normal_x = -std::sin(result.line_angle);
+        const double normal_y = std::cos(result.line_angle);
+        double squared_residual_sum = 0.0;
+        for (const auto& p : points) {
+            const double residual = normal_x * (p.x - mean_x)
+                                  + normal_y * (p.y - mean_y);
+            squared_residual_sum += residual * residual;
+        }
+        result.rms_residual = std::sqrt(
+            squared_residual_sum / static_cast<double>(points.size()));
+        return result;
+    }
+
+    /**
+     * @brief 返回数组中位数。输入按值传递，函数内部可安全排序。
+     */
+    static double medianValue(std::vector<double> values) {
+        if (values.empty()) {
+            return 0.0;
+        }
+        std::sort(values.begin(), values.end());
+        const size_t middle = values.size() / 2;
+        if (values.size() % 2 == 0) {
+            return 0.5 * (values[middle - 1] + values[middle]);
+        }
+        return values[middle];
+    }
+
+    /**
+     * @brief 在右侧作业面尺度内构建局部树冠并进行两阶段稳健 PCA 拟合。
+     *
+     * 第一次 PCA 用于建立候选表面，然后按正交残差的 MAD 门限去除
+     * 枝叶离群点，再用内点重新拟合并检查覆盖宽度、残差和线性。
+     */
+    LineFitResult fitFacingWorkSurface(const std::vector<Point2D>& roi_points,
+                                       std::vector<Point2D>& inlier_points) const {
+        LineFitResult rejected;
+        rejected.point_count = roi_points.size();
+        inlier_points.clear();
+        if (roi_points.size() < 5) {
+            return rejected;
+        }
+
+        std::vector<double> ranges;
+        ranges.reserve(roi_points.size());
+        for (const auto& point : roi_points) {
+            ranges.push_back(std::hypot(point.x, point.y));
+        }
+        std::sort(ranges.begin(), ranges.end());
+        const size_t surface_index = static_cast<size_t>(0.05 * (ranges.size() - 1));
+        const double robust_surface_distance = ranges[surface_index];
+        const double band_min = std::max(0.0, robust_surface_distance - 0.05);
+        const double band_max = robust_surface_distance + facing_depth_band_;
+        const double half_surface_length = 0.5 * work_surface_length_;
+
+        std::vector<Point2D> candidates;
+        candidates.reserve(roi_points.size());
+        for (const auto& point : roi_points) {
+            const double range = std::hypot(point.x, point.y);
+            if (std::fabs(point.y) <= half_surface_length &&
+                range >= band_min && range <= band_max) {
+                candidates.push_back(point);
+            }
+        }
+
+        LineFitResult initial_fit = fitLineByPca(candidates, M_PI / 2.0);
+        initial_fit.point_count = roi_points.size();
+        initial_fit.surface_distance = robust_surface_distance;
+        if (!initial_fit.valid) {
+            return initial_fit;
+        }
+
+        const double normal_x = -std::sin(initial_fit.line_angle);
+        const double normal_y = std::cos(initial_fit.line_angle);
+        std::vector<double> residuals;
+        residuals.reserve(candidates.size());
+        for (const auto& point : candidates) {
+            residuals.push_back(std::fabs(
+                normal_x * (point.x - initial_fit.centroid_x)
+              + normal_y * (point.y - initial_fit.centroid_y)));
+        }
+        const double residual_median = medianValue(residuals);
+        std::vector<double> deviations;
+        deviations.reserve(residuals.size());
+        for (double residual : residuals) {
+            deviations.push_back(std::fabs(residual - residual_median));
+        }
+        const double mad = medianValue(deviations);
+        const double residual_threshold = std::max(
+            0.04, residual_median + 2.5 * 1.4826 * mad);
+
+        inlier_points.reserve(candidates.size());
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (residuals[i] <= residual_threshold) {
+                inlier_points.push_back(candidates[i]);
+            }
+        }
+
+        LineFitResult result = fitLineByPca(inlier_points, M_PI / 2.0);
+        result.point_count = roi_points.size();
+        result.inlier_count = inlier_points.size();
+        result.surface_distance = robust_surface_distance;
+        result.valid = result.valid
+                    && result.inlier_count >= static_cast<size_t>(facing_min_points_)
+                    && result.lateral_span >= facing_min_span_
+                    && result.rms_residual <= facing_max_rms_
+                    && result.linearity_ratio >= facing_min_linearity_;
         return result;
     }
 
@@ -470,9 +627,10 @@ private:
         }
 
         std::vector<Point2D> heading_points;
-        std::vector<Point2D> facing_points;
+        std::vector<Point2D> facing_roi_points;
+        std::vector<Point2D> facing_inlier_points;
         extractRoiPoints(msg, heading_roi_min_rad_, heading_roi_max_rad_, heading_points);
-        extractRoiPoints(msg, facing_roi_min_rad_, facing_roi_max_rad_, facing_points);
+        extractRoiPoints(msg, facing_roi_min_rad_, facing_roi_max_rad_, facing_roi_points);
 
         // 扇形的内外半径直接采用当前 LaserScan 消息的有效测距范围，
         // 因此图像同时表达“允许的角度范围”和“允许的距离范围”。
@@ -486,9 +644,8 @@ private:
                          1.0, 0.45, 0.0, 0.22, 0.02);
 
         publishRoiPoints(heading_points, heading_roi_marker_pub_, "heading_roi_points", 0.0, 0.4, 1.0);
-        publishRoiPoints(facing_points, facing_roi_marker_pub_, "facing_roi_points", 1.0, 0.2, 0.0);
 
-        if (heading_points.size() < 5 && facing_points.size() < 5) {
+        if (heading_points.size() < 5 && facing_roi_points.size() < 5) {
             if ((ros::Time::now() - last_valid_scan_time_).toSec() > scan_timeout_) {
                 publishStop();
                 ROS_WARN_THROTTLE(1.0, "雷达检测区域内均无有效树冠点，底盘已停车");
@@ -521,11 +678,14 @@ private:
             last_valid_heading_time_ = ros::Time::now();
         }
 
-        const double facing_reference = M_PI / 2.0;
-        const LineFitResult facing_fit = fitLineByPca(facing_points, facing_reference);
+        const LineFitResult facing_fit = fitFacingWorkSurface(
+            facing_roi_points, facing_inlier_points);
+        publishRoiPoints(facing_inlier_points, facing_roi_marker_pub_,
+                         "facing_work_surface_inliers", 1.0, 0.2, 0.0);
 
         publishFittedLine(heading_fit, heading_fit_marker_pub_, "heading_fit_line", 0.0, 0.8, 1.0);
         publishFittedLine(facing_fit, facing_fit_marker_pub_, "facing_fit_line", 1.0, 0.0, 0.8);
+        publishDesiredWorkSurface(facing_fit);
 
         if (state_ == MotionState::MOVE_AROUND_CANOPY && !heading_fit.valid) {
             ROS_WARN_THROTTLE(1.0, "航向检测区域内的有效点过少，正在检查是否允许短时几何兜底");
@@ -538,7 +698,17 @@ private:
             state_ == MotionState::FACE_CANOPY;
         if (normal_state_needs_facing && !facing_fit.valid) {
             publishStop();
-            ROS_WARN_THROTTLE(1.0, "正对检测区域内的有效点过少，无法判断机器是否正对树冠");
+            facing_alignment_stable_since_ = ros::Time();
+            ROS_WARN_THROTTLE(1.0,
+                              "作业面树冠拟合无效：ROI点=%zu，内点=%zu，覆盖=%.2f/%.2f米，RMS=%.3f/%.3f米，线性比=%.1f/%.1f，底盘已停车",
+                              facing_fit.point_count,
+                              facing_fit.inlier_count,
+                              facing_fit.lateral_span,
+                              facing_min_span_,
+                              facing_fit.rms_residual,
+                              facing_max_rms_,
+                              facing_fit.linearity_ratio,
+                              facing_min_linearity_);
             return;
         }
 
@@ -803,28 +973,12 @@ private:
      * @return 无。
      */
     void controlAlignTangent(const LineFitResult& facing_fit) {
-        const double yaw_error = calculateFacingError(facing_fit);
-
-        if (std::fabs(yaw_error) <= align_tolerance_rad_) {
-            publishStop();
+        if (controlWorkSurfaceAlignment(facing_fit, "移动前对准")) {
             resetSegmentStart();
             heading_history_.clear();
             setState(MotionState::MOVE_AROUND_CANOPY);
-            ROS_INFO("树冠朝向已对准，开始新一段绕树移动");
-            return;
+            ROS_INFO("右侧作业面已与局部树冠切线平行，开始新一段绕树移动");
         }
-
-        geometry_msgs::Twist cmd;
-        cmd.angular.z = clamp(k_turn_align_ * yaw_error, -max_angular_speed_, max_angular_speed_);
-        cmd_vel_pub_.publish(cmd);
-
-        publishSteeringMarker(facing_fit.line_angle);
-        ROS_INFO_THROTTLE(0.5,
-                          "移动前对准：拟合线角=%.1f 度，质心方位角=%.1f 度，融合误差=%.1f 度，角速度指令=%.3f 弧度每秒",
-                          facing_fit.line_angle * 180.0 / M_PI,
-                          facing_fit.bearing * 180.0 / M_PI,
-                          yaw_error * 180.0 / M_PI,
-                          cmd.angular.z);
     }
 
     /**
@@ -952,26 +1106,81 @@ private:
      * @return 无。
      */
     void controlFaceCanopy(const LineFitResult& facing_fit) {
-        const double yaw_error = calculateFacingError(facing_fit);
-
-        if (std::fabs(yaw_error) <= align_tolerance_rad_) {
-            publishStop();
+        if (controlWorkSurfaceAlignment(facing_fit, "正对树冠调整")) {
             setState(MotionState::WORK_PAUSE);
-            ROS_INFO("机器已重新正对树冠，进入作业停顿状态");
-            return;
+            ROS_INFO("右侧作业面已稳定正对树冠，进入作业停顿状态");
+        }
+    }
+
+    /**
+     * @brief 原地调整车体，使右侧作业面与局部树冠切线平行。
+     *
+     * 线角误差是主控制量，质心方位只用于小幅修正和独立安全门限。
+     * 两个误差连续满足指定时间后才返回 true。
+     */
+    bool controlWorkSurfaceAlignment(const LineFitResult& facing_fit,
+                                     const char* context_name) {
+        const double target_facing_line = M_PI / 2.0;
+        const double line_angle = chooseClosestLineAngle(
+            facing_fit.line_angle, target_facing_line);
+        const double line_error = normalizeAngle(line_angle - target_facing_line);
+        const double bearing_error = normalizeAngle(facing_fit.bearing);
+        const double fused_error = calculateFacingError(facing_fit);
+        const bool within_tolerance =
+            std::fabs(line_error) <= align_tolerance_rad_ &&
+            std::fabs(bearing_error) <= facing_bearing_tolerance_rad_;
+
+        if (within_tolerance) {
+            publishStop();
+            if (facing_alignment_stable_since_.isZero()) {
+                facing_alignment_stable_since_ = ros::Time::now();
+            }
+            const double stable_time =
+                (ros::Time::now() - facing_alignment_stable_since_).toSec();
+            ROS_INFO_THROTTLE(0.2,
+                              "%s：表面角误差=%.2f度，方位误差=%.2f度，稳定时间=%.2f/%.2f秒，内点=%zu，覆盖=%.2f米，RMS=%.3f米，线性比=%.1f",
+                              context_name,
+                              line_error * 180.0 / M_PI,
+                              bearing_error * 180.0 / M_PI,
+                              stable_time,
+                              facing_stable_duration_,
+                              facing_fit.inlier_count,
+                              facing_fit.lateral_span,
+                              facing_fit.rms_residual,
+                              facing_fit.linearity_ratio);
+            return stable_time >= facing_stable_duration_;
+        }
+
+        facing_alignment_stable_since_ = ros::Time();
+        double angular_speed = clamp(k_turn_align_ * fused_error,
+                                     -max_angular_speed_, max_angular_speed_);
+        if (std::fabs(angular_speed) < min_align_angular_speed_) {
+            const double primary_error = std::fabs(line_error) > align_tolerance_rad_
+                                       ? line_error
+                                       : bearing_error;
+            if (std::fabs(primary_error) > 1e-6) {
+                angular_speed = std::copysign(min_align_angular_speed_, primary_error);
+            }
         }
 
         geometry_msgs::Twist cmd;
-        cmd.angular.z = clamp(k_turn_align_ * yaw_error, -max_angular_speed_, max_angular_speed_);
+        cmd.linear.x = 0.0;
+        cmd.angular.z = angular_speed;
         cmd_vel_pub_.publish(cmd);
+        publishSteeringMarker(line_angle);
 
-        publishSteeringMarker(facing_fit.line_angle);
         ROS_INFO_THROTTLE(0.5,
-                          "正对树冠调整：拟合线角=%.1f 度，质心方位角=%.1f 度，融合误差=%.1f 度，角速度指令=%.3f 弧度每秒",
-                          facing_fit.line_angle * 180.0 / M_PI,
-                          facing_fit.bearing * 180.0 / M_PI,
-                          yaw_error * 180.0 / M_PI,
-                          cmd.angular.z);
+                          "%s：原地转向，表面角误差=%.2f度，方位误差=%.2f度，融合误差=%.2f度，角速度=%.3f弧度每秒，内点=%zu，覆盖=%.2f米，RMS=%.3f米，线性比=%.1f",
+                          context_name,
+                          line_error * 180.0 / M_PI,
+                          bearing_error * 180.0 / M_PI,
+                          fused_error * 180.0 / M_PI,
+                          cmd.angular.z,
+                          facing_fit.inlier_count,
+                          facing_fit.lateral_span,
+                          facing_fit.rms_residual,
+                          facing_fit.linearity_ratio);
+        return false;
     }
 
     /**
@@ -1056,6 +1265,7 @@ private:
         const char* old_name = stateChineseName(state_);
         state_ = new_state;
         state_enter_time_ = ros::Time::now();
+        facing_alignment_stable_since_ = ros::Time();
         publishState();
         ROS_INFO("状态转换：%s -> %s", old_name, stateChineseName(state_));
     }
@@ -1267,6 +1477,46 @@ private:
         marker.points.push_back(start);
         marker.points.push_back(end);
         publisher.publish(marker);
+    }
+
+    /**
+     * @brief 在局部树冠质心处显示理想作业面方向。
+     *
+     * 绿色线始终沿雷达 y 轴，对应车体前后方向；它与紫色树冠
+     * 拟合线重合时，表示右侧作业面已与局部树冠切线平行。
+     */
+    void publishDesiredWorkSurface(const LineFitResult& fit) {
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = laser_frame_;
+        marker.header.stamp = ros::Time::now();
+        marker.ns = "work_surface_target";
+        marker.id = 1;
+
+        if (!fit.valid) {
+            marker.action = visualization_msgs::Marker::DELETE;
+            facing_fit_marker_pub_.publish(marker);
+            return;
+        }
+
+        marker.type = visualization_msgs::Marker::LINE_STRIP;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.025;
+        marker.color.r = 0.1;
+        marker.color.g = 1.0;
+        marker.color.b = 0.1;
+        marker.color.a = 1.0;
+        marker.lifetime = ros::Duration(0.2);
+
+        geometry_msgs::Point start;
+        start.x = fit.centroid_x;
+        start.y = fit.centroid_y - 0.5 * work_surface_length_;
+        start.z = 0.06;
+        geometry_msgs::Point end = start;
+        end.y = fit.centroid_y + 0.5 * work_surface_length_;
+        marker.points.push_back(start);
+        marker.points.push_back(end);
+        facing_fit_marker_pub_.publish(marker);
     }
 
     /**

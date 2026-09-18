@@ -2,15 +2,11 @@
 <sdf version="1.6">
   <world name="single_canopy_world">
     <!--
-      single_canopy.world
-      
-      最小 Gazebo 世界：
-        - 一块平地；
-        - 一个太阳光源；
-        - 一棵用圆柱近似的树冠二维投影。
-      这里先不追求树的真实外观。
-      目标是让 Gazebo 激光雷达能扫到一个稳定的障碍物边界，
-      从而验证你的控制节点能否驱动小车绕树冠走。
+      Gazebo 单树树冠世界。
+
+      多个相互重叠的竖直圆柱共同形成约 6.0 m × 5.0 m 的不规则树冠
+      俯视轮廓。这样既保留真实树冠的局部凹凸，又能让 Gazebo ray
+      传感器获得稳定碰撞边界，适合验证雷达局部轮廓跟随控制。
     -->
     <include>
       <uri>model://ground_plane</uri>
@@ -18,31 +14,88 @@
     <include>
       <uri>model://sun</uri>
     </include>
-    <!-- 树冠：用一个低矮圆柱表示二维投影，半径约 0.65m。 -->
-    <model name="canopy_cylinder">
+
+    <model name="irregular_lychee_canopy">
       <static>true</static>
-      <pose>0 0 0.35 0 0 0</pose>
+      <pose>0 0 0 0 0 0</pose>
       <link name="canopy_link">
-        <visual name="canopy_visual">
-          <geometry>
-            <cylinder>
-              <radius>0.65</radius>
-              <length>0.70</length>
-            </cylinder>
-          </geometry>
-          <material>
-            <ambient>0.0 0.45 0.05 0.55</ambient>
-            <diffuse>0.0 0.65 0.08 0.55</diffuse>
-          </material>
+        <!-- 中央主体。所有圆柱从接近地面延伸到约 2.8 m 高。 -->
+        <visual name="center_visual">
+          <pose>0 0 1.45 0 0 0</pose>
+          <geometry><cylinder><radius>1.85</radius><length>2.70</length></cylinder></geometry>
+          <material><ambient>0.02 0.38 0.03 0.75</ambient><diffuse>0.02 0.55 0.04 0.75</diffuse></material>
         </visual>
-        <collision name="canopy_collision">
-          <geometry>
-            <cylinder>
-              <radius>0.65</radius>
-              <length>0.70</length>
-            </cylinder>
-          </geometry>
+        <collision name="center_collision">
+          <pose>0 0 1.45 0 0 0</pose>
+          <geometry><cylinder><radius>1.85</radius><length>2.70</length></cylinder></geometry>
         </collision>
+
+        <!-- 东西方向枝叶，使总体宽度接近 6 m。东侧最外缘约 x=2.90 m。 -->
+        <visual name="east_visual">
+          <pose>1.10 0.05 1.50 0 0 0</pose>
+          <geometry><cylinder><radius>1.80</radius><length>2.80</length></cylinder></geometry>
+          <material><ambient>0.02 0.42 0.04 0.72</ambient><diffuse>0.03 0.62 0.05 0.72</diffuse></material>
+        </visual>
+        <collision name="east_collision">
+          <pose>1.10 0.05 1.50 0 0 0</pose>
+          <geometry><cylinder><radius>1.80</radius><length>2.80</length></cylinder></geometry>
+        </collision>
+        <visual name="west_visual">
+          <pose>-1.05 -0.10 1.42 0 0 0</pose>
+          <geometry><cylinder><radius>1.72</radius><length>2.64</length></cylinder></geometry>
+          <material><ambient>0.01 0.35 0.03 0.70</ambient><diffuse>0.02 0.52 0.04 0.70</diffuse></material>
+        </visual>
+        <collision name="west_collision">
+          <pose>-1.05 -0.10 1.42 0 0 0</pose>
+          <geometry><cylinder><radius>1.72</radius><length>2.64</length></cylinder></geometry>
+        </collision>
+
+        <!-- 南北方向枝叶，使总体高度方向的俯视尺寸接近 5 m。 -->
+        <visual name="north_visual">
+          <pose>0.10 1.05 1.48 0 0 0</pose>
+          <geometry><cylinder><radius>1.45</radius><length>2.76</length></cylinder></geometry>
+          <material><ambient>0.02 0.40 0.02 0.72</ambient><diffuse>0.03 0.58 0.03 0.72</diffuse></material>
+        </visual>
+        <collision name="north_collision">
+          <pose>0.10 1.05 1.48 0 0 0</pose>
+          <geometry><cylinder><radius>1.45</radius><length>2.76</length></cylinder></geometry>
+        </collision>
+        <visual name="south_visual">
+          <pose>-0.15 -1.05 1.38 0 0 0</pose>
+          <geometry><cylinder><radius>1.45</radius><length>2.56</length></cylinder></geometry>
+          <material><ambient>0.01 0.37 0.03 0.70</ambient><diffuse>0.02 0.54 0.04 0.70</diffuse></material>
+        </visual>
+        <collision name="south_collision">
+          <pose>-0.15 -1.05 1.38 0 0 0</pose>
+          <geometry><cylinder><radius>1.45</radius><length>2.56</length></cylinder></geometry>
+        </collision>
+
+        <!-- 两个较小叶簇增加东侧局部曲率变化。 -->
+        <visual name="northeast_visual">
+          <pose>1.45 0.85 1.55 0 0 0</pose>
+          <geometry><cylinder><radius>1.25</radius><length>2.70</length></cylinder></geometry>
+          <material><ambient>0.03 0.46 0.04 0.68</ambient><diffuse>0.04 0.66 0.06 0.68</diffuse></material>
+        </visual>
+        <collision name="northeast_collision">
+          <pose>1.45 0.85 1.55 0 0 0</pose>
+          <geometry><cylinder><radius>1.25</radius><length>2.70</length></cylinder></geometry>
+        </collision>
+        <visual name="southeast_visual">
+          <pose>1.35 -0.90 1.43 0 0 0</pose>
+          <geometry><cylinder><radius>1.30</radius><length>2.56</length></cylinder></geometry>
+          <material><ambient>0.02 0.43 0.03 0.70</ambient><diffuse>0.03 0.61 0.04 0.70</diffuse></material>
+        </visual>
+        <collision name="southeast_collision">
+          <pose>1.35 -0.90 1.43 0 0 0</pose>
+          <geometry><cylinder><radius>1.30</radius><length>2.56</length></cylinder></geometry>
+        </collision>
+
+        <!-- 树干主要用于视觉识别；树冠碰撞轮廓仍是雷达控制目标。 -->
+        <visual name="trunk_visual">
+          <pose>0 0 0.80 0 0 0</pose>
+          <geometry><cylinder><radius>0.22</radius><length>1.60</length></cylinder></geometry>
+          <material><ambient>0.25 0.12 0.04 1</ambient><diffuse>0.38 0.20 0.07 1</diffuse></material>
+        </visual>
       </link>
     </model>
   </world>

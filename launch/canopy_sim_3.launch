@@ -41,8 +41,8 @@
   -->
   <arg name="heading_roi_min_deg" default="-30.0" />
   <arg name="heading_roi_max_deg" default="120.0" />
-  <arg name="facing_roi_min_deg" default="-30.0" />
-  <arg name="facing_roi_max_deg" default="30.0" />
+  <arg name="facing_roi_min_deg" default="-60.0" />
+  <arg name="facing_roi_max_deg" default="60.0" />
   <arg name="laser_yaw_offset_deg" default="-90.0" />
   <!--
     实物比例基准：

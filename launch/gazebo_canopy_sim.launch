@@ -1,83 +1,154 @@
 <launch>
   <!--
-    gazebo_canopy_sim.launch
-    
-    第一版 Gazebo 三维仿真入口。
-    启动内容：
-      1. Gazebo 世界 single_canopy.world；
-      2. 机器人模型 tracked_canopy_robot.urdf.xacro；
-      3. robot_state_publisher；
-      4. spawn_model，把机器人放入 Gazebo；
-      5. odom_listener_5_dipan，你的树冠控制节点。
-    注意：
-      这个 launch 假设文件已经放在 mid360_processor 包中：
-        urdf/tracked_canopy_robot.urdf.xacro
-        worlds/single_canopy.world
-        launch/gazebo_canopy_sim.launch
+    Gazebo 三维树冠绕行仿真入口。
+    数据闭环：Gazebo 发布 /Odometry 和 /scan_2d，控制节点发布 /cmd_vel。
+    控制参数与 canopy_sim_3.launch 保持一致，复用已验证的状态机。
   -->
-  <arg name="paused" default="false"/>
-  <arg name="use_sim_time" default="true"/>
-  <arg name="gui" default="true"/>
-  <arg name="world" default="$(find mid360_processor)/worlds/single_canopy.world"/>
-  <!-- 初始位置：树冠在 (0,0)，机器人从右侧出发，车头朝 -Y，右侧雷达朝向树冠。 -->
-  <arg name="robot_x" default="1.70"/>
-  <arg name="robot_y" default="0.00"/>
-  <arg name="robot_z" default="0.12"/>
-  <arg name="robot_yaw" default="-1.57079632679"/>
-  <!-- 控制参数，先保守一点，避免 Gazebo 中运动过快。 -->
-  <arg name="step_distance" default="0.30"/>
-  <arg name="target_distance" default="0.80"/>
-  <arg name="linear_speed" default="0.04"/>
-  <arg name="max_angular_speed" default="0.22"/>
-  <arg name="work_pause_duration" default="1.0"/>
-  <arg name="roi_angle_limit_deg" default="120.0"/>
-  <arg name="canopy_radius_for_orbit" default="0.65"/>
-  <arg name="laser_yaw_offset_deg" default="-90.0"/>
-  <param name="/use_sim_time" value="$(arg use_sim_time)"/>
-  <!-- 启动 Gazebo。 -->
+  <arg name="paused" default="false" />
+  <arg name="use_sim_time" default="true" />
+  <arg name="gui" default="true" />
+  <arg name="launch_rviz" default="true" />
+  <!-- 仅控制 Gazebo 中蓝色激光射线的显示，不改变 /scan_2d。 -->
+  <arg name="visualize_laser" default="false" />
+  <arg name="world" default="$(find mid360_processor)/worlds/single_canopy.world" />
+
+  <!--
+    树冠东侧最外缘约为 x=2.90 m。雷达位于车体中心右侧 0.50 m，
+    因此中心位于 x=3.90 m 时，初始右侧净距约为 0.50 m。
+    车头朝 -Y，车体右侧和雷达正前方朝向树冠。
+  -->
+  <arg name="robot_x" default="3.90" />
+  <arg name="robot_y" default="0.00" />
+  <!-- base_footprint 就在地面上，base_link 的高度已在 URDF 内定义。 -->
+  <arg name="robot_z" default="0.00" />
+  <arg name="robot_yaw" default="-1.57079632679" />
+
+  <!-- 当前二维仿真已经验证过的状态机和运动控制参数。 -->
+  <arg name="clockwise" default="true" />
+  <arg name="step_distance" default="0.50" />
+  <arg name="target_distance" default="0.50" />
+  <arg name="distance_tolerance" default="0.05" />
+  <arg name="linear_speed" default="0.10" />
+  <arg name="max_angular_speed" default="0.12" />
+  <arg name="work_pause_duration" default="1.0" />
+  <arg name="return_distance_threshold" default="0.50" />
+  <arg name="heading_fallback_timeout" default="0.50" />
+  <arg name="max_heading_change_deg" default="5.0" />
+  <arg name="max_orbit_delta_deg" default="15.0" />
+
+  <!-- 雷达局部树冠跟随控制增益。 -->
+  <arg name="k_turn_move" default="0.20" />
+  <arg name="k_orbit_heading" default="0.80" />
+  <arg name="k_bearing_move" default="0.65" />
+  <arg name="k_distance_move" default="0.80" />
+  <arg name="k_turn_align" default="0.80" />
+  <arg name="k_orbit_feedforward" default="1.0" />
+
+  <!-- 右侧平面作业装置与局部树冠切线的正对判断。 -->
+  <arg name="work_surface_length" default="1.0" />
+  <arg name="facing_depth_band" default="0.4" />
+  <arg name="facing_min_points" default="20" />
+  <arg name="facing_min_span" default="0.4" />
+  <arg name="facing_max_rms" default="0.08" />
+  <arg name="facing_min_linearity" default="4.0" />
+  <arg name="align_tolerance_deg" default="2.0" />
+  <arg name="facing_bearing_tolerance_deg" default="5.0" />
+  <arg name="facing_stable_duration" default="0.4" />
+  <arg name="min_align_angular_speed" default="0.02" />
+  <arg name="facing_line_weight" default="0.85" />
+  <arg name="facing_bearing_weight" default="0.15" />
+
+  <!-- 角度相对 livox_frame 的 x 轴；蓝色航向 ROI 与橙色正对 ROI。 -->
+  <arg name="heading_roi_min_deg" default="-30.0" />
+  <arg name="heading_roi_max_deg" default="120.0" />
+  <arg name="facing_roi_min_deg" default="-45.0" />
+  <arg name="facing_roi_max_deg" default="45.0" />
+
+  <!-- 雷达位于车体右边缘，正前方朝车体右侧。 -->
+  <arg name="laser_yaw_offset_deg" default="-90.0" />
+  <arg name="laser_x_offset" default="0.00" />
+  <arg name="laser_y_offset" default="-0.50" />
+  <arg name="canopy_radius_for_orbit" default="2.75" />
+
+  <param name="/use_sim_time" value="$(arg use_sim_time)" />
+
+  <!-- 加载地面、光源和约 6 m × 5 m 的不规则树冠。 -->
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
-    <arg name="world_name" value="$(arg world)"/>
-    <arg name="paused" value="$(arg paused)"/>
-    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
-    <arg name="gui" value="$(arg gui)"/>
+    <arg name="world_name" value="$(arg world)" />
+    <arg name="paused" value="$(arg paused)" />
+    <arg name="use_sim_time" value="$(arg use_sim_time)" />
+    <arg name="gui" value="$(arg gui)" />
   </include>
-  <!-- xacro 会把 urdf.xacro 展开成 robot_description 参数。 -->
+
+  <!-- 展开机器人模型并发布各 link 的 TF。 -->
   <param name="robot_description"
-         command="$(find xacro)/xacro '$(find mid360_processor)/urdf/tracked_canopy_robot.urdf.xacro'"/>
-  <!-- 发布机器人各 link 之间的 TF。 -->
+         command="$(find xacro)/xacro '$(find mid360_processor)/urdf/tracked_canopy_robot.urdf.xacro' visualize_laser:=$(arg visualize_laser)" />
   <node pkg="robot_state_publisher"
         type="robot_state_publisher"
         name="robot_state_publisher"
-        output="screen"/>
-  <!-- 把 robot_description 中的机器人生成到 Gazebo 世界中。 -->
+        output="screen" />
+
+  <!-- 在树冠东侧生成 1.60 m × 1.00 m 的履带式底盘。 -->
   <node pkg="gazebo_ros"
         type="spawn_model"
         name="spawn_tracked_canopy_robot"
         output="screen"
-        args="-urdf -param robot_description -model tracked_canopy_robot -x $(arg robot_x) -y $(arg robot_y) -z $(arg robot_z) -Y $(arg robot_yaw)"/>
-  <!-- 你的控制节点。 -->
+        args="-urdf -param robot_description -model tracked_canopy_robot -x $(arg robot_x) -y $(arg robot_y) -z $(arg robot_z) -Y $(arg robot_yaw)" />
+
+  <!-- 当前树冠跟随控制节点。 -->
   <node pkg="mid360_processor"
         type="odom_listener_5_dipan"
         name="canopy_tracker_node"
         output="screen">
-    <param name="clockwise" value="true"/>
-    <param name="step_distance" value="$(arg step_distance)"/>
-    <param name="target_distance" value="$(arg target_distance)"/>
-    <param name="linear_speed" value="$(arg linear_speed)"/>
-    <param name="max_angular_speed" value="$(arg max_angular_speed)"/>
-    <param name="work_pause_duration" value="$(arg work_pause_duration)"/>
-    <param name="roi_angle_limit_deg" value="$(arg roi_angle_limit_deg)"/>
-    <param name="canopy_radius_for_orbit" value="$(arg canopy_radius_for_orbit)"/>
-    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)"/>
-    <param name="cmd_vel_topic" value="/cmd_vel"/>
-    <param name="odom_topic" value="/Odometry"/>
-    <param name="scan_topic" value="/scan_2d"/>
-    <param name="laser_frame" value="livox_frame"/>
+    <param name="clockwise" value="$(arg clockwise)" />
+    <param name="step_distance" value="$(arg step_distance)" />
+    <param name="target_distance" value="$(arg target_distance)" />
+    <param name="distance_tolerance" value="$(arg distance_tolerance)" />
+    <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="max_angular_speed" value="$(arg max_angular_speed)" />
+    <param name="work_pause_duration" value="$(arg work_pause_duration)" />
+    <param name="return_distance_threshold" value="$(arg return_distance_threshold)" />
+    <param name="heading_fallback_timeout" value="$(arg heading_fallback_timeout)" />
+    <param name="max_heading_change_deg" value="$(arg max_heading_change_deg)" />
+    <param name="max_orbit_delta_deg" value="$(arg max_orbit_delta_deg)" />
+    <param name="k_turn_move" value="$(arg k_turn_move)" />
+    <param name="k_orbit_heading" value="$(arg k_orbit_heading)" />
+    <param name="k_bearing_move" value="$(arg k_bearing_move)" />
+    <param name="k_distance_move" value="$(arg k_distance_move)" />
+    <param name="k_turn_align" value="$(arg k_turn_align)" />
+    <param name="k_orbit_feedforward" value="$(arg k_orbit_feedforward)" />
+    <param name="work_surface_length" value="$(arg work_surface_length)" />
+    <param name="facing_depth_band" value="$(arg facing_depth_band)" />
+    <param name="facing_min_points" value="$(arg facing_min_points)" />
+    <param name="facing_min_span" value="$(arg facing_min_span)" />
+    <param name="facing_max_rms" value="$(arg facing_max_rms)" />
+    <param name="facing_min_linearity" value="$(arg facing_min_linearity)" />
+    <param name="align_tolerance_deg" value="$(arg align_tolerance_deg)" />
+    <param name="facing_bearing_tolerance_deg" value="$(arg facing_bearing_tolerance_deg)" />
+    <param name="facing_stable_duration" value="$(arg facing_stable_duration)" />
+    <param name="min_align_angular_speed" value="$(arg min_align_angular_speed)" />
+    <param name="facing_line_weight" value="$(arg facing_line_weight)" />
+    <param name="facing_bearing_weight" value="$(arg facing_bearing_weight)" />
+    <param name="tree_filter_alpha" value="0.02" />
+    <param name="lock_tree_estimate" value="true" />
+    <param name="heading_roi_min_deg" value="$(arg heading_roi_min_deg)" />
+    <param name="heading_roi_max_deg" value="$(arg heading_roi_max_deg)" />
+    <param name="facing_roi_min_deg" value="$(arg facing_roi_min_deg)" />
+    <param name="facing_roi_max_deg" value="$(arg facing_roi_max_deg)" />
+    <param name="canopy_radius_for_orbit" value="$(arg canopy_radius_for_orbit)" />
+    <param name="laser_yaw_offset_deg" value="$(arg laser_yaw_offset_deg)" />
+    <param name="laser_x_offset" value="$(arg laser_x_offset)" />
+    <param name="laser_y_offset" value="$(arg laser_y_offset)" />
+    <param name="cmd_vel_topic" value="/cmd_vel" />
+    <param name="odom_topic" value="/Odometry" />
+    <param name="scan_topic" value="/scan_2d" />
+    <param name="laser_frame" value="livox_frame" />
   </node>
 
   <node pkg="rviz"
-      type="rviz"
-      name="rviz"
-      args="-d $(find mid360_processor)/rviz/gazebo_canopy_sim.rviz"
-      output="screen" />
+        type="rviz"
+        name="rviz"
+        if="$(arg launch_rviz)"
+        args="-d $(find mid360_processor)/rviz/gazebo_canopy_sim.rviz"
+        output="screen" />
 </launch>
